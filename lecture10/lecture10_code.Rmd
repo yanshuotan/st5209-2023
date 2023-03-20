@@ -1,0 +1,185 @@
+---
+title: "Lecture 10 Code Examples"
+output: 
+  pdf_document:
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fpp3)
+```
+
+# Misspecified ARMA models
+
+Let's generate data from an AR(2) model. What happens if we fit a misspecified 
+model, i.e. if we choose the wrong order for $p$.
+
+```{r create-ar-data-and-fit-models}
+set.seed(5209)
+ar2_data <- arima.sim(model = list(ar = c(0.6, -0.2)), n = 100)
+ar1_model <- arima(ar2_data, order = c(1, 0, 0))
+ar2_model <- arima(ar2_data, order = c(2, 0, 0))
+ar4_model <- arima(ar2_data, order = c(4, 0, 0))
+```
+
+```{r repeat-experiment-several-times}
+set.seed(5209)
+B <- 500
+ar2_data <- map(1:B, ~ arima.sim(model = list(ar = c(0.6, -0.2)), n = 100))
+ar1_model_coefs_ <- map(ar2_data, ~ arima(., order = c(1, 0, 0))$coef) |>
+  transpose() |>
+  map(unlist) |>
+  as.tibble()
+ar2_model_coefs_ <- map(ar2_data, ~ arima(., order = c(2, 0, 0))$coef) |>
+  transpose() |>
+  map(unlist) |>
+  as.tibble()
+ar4_model_coefs_ <- map(ar2_data, ~ arima(., order = c(4, 0, 0))$coef) |>
+  transpose() |>
+  map(unlist) |>
+  as.tibble()
+```
+
+```{r plot-phi1-coefs}
+
+phi1_coefs <- tibble(ar1 = ar1_model_coefs_$ar1,
+                     ar2 = ar2_model_coefs_$ar1,
+                     ar4 = ar4_model_coefs_$ar1)
+phi1_coefs |> 
+  pivot_longer(cols = everything(),
+               names_to = "model",
+               values_to = "coefs") |>
+  ggplot() +
+  geom_density(aes(x = coefs, color = model)) + 
+  geom_vline(xintercept = 0.6)
+```
+```{r plot-phi2-coefs}
+
+phi2_coefs <- tibble(ar2 = ar2_model_coefs_$ar2,
+                     ar4 = ar4_model_coefs_$ar2)
+phi2_coefs |> 
+  pivot_longer(cols = everything(),
+               names_to = "model",
+               values_to = "coefs") |>
+  ggplot() +
+  geom_density(aes(x = coefs, color = model)) + 
+  geom_vline(xintercept = -0.2)
+```
+
+# Real data analysis
+
+## Working with tsibble
+
+The `tsibble` package allows us to work with multiple time series in one data frame.
+For instance, consider the `global_economy` data frame, which contains economic 
+indicators featured by the World Bank from 1960 to 2017.
+Each time series is identified by a `Key`.
+The time series may be multivariate, i.e. have multiple columns.
+
+## CAF exports
+
+Let us try to model exports from the Central African Republic.
+
+```{r}
+caf_economy <- global_economy |>
+  filter(Code == "CAF")
+caf_economy |>
+  autoplot(Exports) +
+  labs(title="Central African Republic exports",
+       y="% of GDP")
+```
+
+This is non-stationary, so we can take a first difference.
+
+
+```{r}
+caf_economy |>
+  gg_tsdisplay(difference(Exports), plot_type='partial')
+```
+
+From the ACF and PACF plots, it seems that either an AR(2) or MA(3) model is 
+appropriate for the residuals. We hence fit these two models, and also try
+automatic model search (we will discuss this more next week). We also fit an AR(5)
+model for comparison. The `fable` package makes fitting all 3 models at the 
+same time extremely easy. The result is a `mable`, i.e. a dataframe of models.
+
+```{r}
+caf_fit <- caf_economy |>
+  model(arima210 = ARIMA(Exports ~ pdq(2,1,0)),
+        arima013 = ARIMA(Exports ~ pdq(0,1,3)),
+        arima510 = ARIMA(Exports ~ pdq(5,1,0)),
+        auto = ARIMA(Exports))
+
+caf_fit |> glance()
+```
+
+We see that while ARIMA(5,1,0) has the largest log likelihood, it has the largest
+AIC and AICc (smaller is better). The AIC and AICc of the other 3 models are
+comparable. Finally, we check the order of the model found by automatic model search:
+We got an ARIMA(2,1,2) model.
+
+```{r}
+caf_fit["auto"]
+```
+
+We now do a residual diagnosis. To see if 
+
+```{r}
+caf_fit |>
+  select(arima210) |>
+  gg_tsresiduals()
+```
+
+The `augment` method produces the fitted and residual values for each model.
+
+```{r}
+augment(caf_fit)
+```
+
+We can now use the residuals to compute a Ljung-Box test statistic for each model. 
+We see that the p-values are large, so in each case, the residuals are 
+well-approximated by a white noise sequence.
+
+```{r}
+augment(caf_fit) |>
+  # filter(.model=='arima210') |>
+  features(.innov, ljung_box, lag = 10, dof = 3)
+```
+
+Finally, we can forecast using our model.
+
+```{r}
+caf_fit |>
+  forecast(h=5) |>
+  filter(.model=='arima210') |>
+  autoplot(global_economy)
+```
+## CAF GDP: Understanding ARIMA models
+
+```{r}
+caf_economy |>
+  autoplot(GDP) +
+  labs(title="Central African Republic GDP")
+```
+
+```{r}
+caf_economy |>
+  gg_tsdisplay(difference(GDP), plot_type='partial')
+```
+```{r}
+caf_fit <- caf_economy |>
+  model(arima200 = ARIMA(GDP ~ pdq(2,0,0)),
+        arima210 = ARIMA(GDP ~ pdq(2,1,0)),
+        arima220 = ARIMA(GDP ~ pdq(2,2,0)),
+        auto = ARIMA(GDP))
+
+caf_fit |> glance()
+```
+```{r}
+caf_fit |>
+  forecast(h=5) |>
+  autoplot(global_economy)
+```
+
