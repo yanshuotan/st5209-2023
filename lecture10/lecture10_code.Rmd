@@ -183,3 +183,9 @@ caf_fit |>
   autoplot(global_economy)
 ```
 
+Understanding ARIMA models:
+- If $c=0$, $d=0$, long-term forecasts will tend to 0
+- If $c=0$, $d=1$, long-term forecasts will tend to a nonzero constant
+- If $c=0$, $d=2$, long-term forecasts will follow a straight line
+- If $c\neq 0$, $d=0$, long-term forecasts will tend to a nonzero constant
+- If $c\neq 0$, $d=1$, long-term forecasts will follow a straight line
