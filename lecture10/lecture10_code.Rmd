@@ -55,6 +55,8 @@ phi1_coefs |>
   geom_density(aes(x = coefs, color = model)) + 
   geom_vline(xintercept = 0.6)
 ```
+
+
 ```{r plot-phi2-coefs}
 
 phi2_coefs <- tibble(ar2 = ar2_model_coefs_$ar2,
@@ -94,7 +96,7 @@ caf_economy |>
 This is non-stationary, so we can take a first difference.
 
 
-```{r}
+```{r, warning=FALSE}
 caf_economy |>
   gg_tsdisplay(difference(Exports), plot_type='partial')
 ```
@@ -124,7 +126,7 @@ We got an ARIMA(2,1,2) model.
 caf_fit["auto"]
 ```
 
-We now do a residual diagnosis. To see if 
+We now do a residual diagnosis. We first view time and ACF plots of the residuals.
 
 ```{r}
 caf_fit |>
@@ -135,7 +137,7 @@ caf_fit |>
 The `augment` method produces the fitted and residual values for each model.
 
 ```{r}
-augment(caf_fit)
+augment(caf_fit) |> View()
 ```
 
 We can now use the residuals to compute a Ljung-Box test statistic for each model. 
@@ -145,15 +147,15 @@ well-approximated by a white noise sequence.
 ```{r}
 augment(caf_fit) |>
   # filter(.model=='arima210') |>
-  features(.innov, ljung_box, lag = 10, dof = 3)
+  features(.innov, ljung_box, lag = 10, dof = c(3,2,5,4))
 ```
 
 Finally, we can forecast using our model.
 
 ```{r}
 caf_fit |>
-  forecast(h=5) |>
-  filter(.model=='arima210') |>
+  forecast(h=3) |>
+  # filter(.model=='arima210') |>
   autoplot(global_economy)
 ```
 ## CAF GDP: Understanding ARIMA models
@@ -168,6 +170,12 @@ caf_economy |>
 caf_economy |>
   gg_tsdisplay(difference(GDP), plot_type='partial')
 ```
+
+The first difference is not stationary, but let us fit some models anyway to view
+how different orders affect the shape of the forecast curves and prediction intervals.
+
+
+
 ```{r}
 caf_fit <- caf_economy |>
   model(arima200 = ARIMA(GDP ~ pdq(2,0,0)),
@@ -177,15 +185,19 @@ caf_fit <- caf_economy |>
 
 caf_fit |> glance()
 ```
+
+
 ```{r}
 caf_fit |>
-  forecast(h=5) |>
+  forecast(h=10) |>
+  filter(.model %in% c('auto', 'arima220')) |>
   autoplot(global_economy)
 ```
 
 Understanding ARIMA models:
-- If $c=0$, $d=0$, long-term forecasts will tend to 0
-- If $c=0$, $d=1$, long-term forecasts will tend to a nonzero constant
-- If $c=0$, $d=2$, long-term forecasts will follow a straight line
-- If $c\neq 0$, $d=0$, long-term forecasts will tend to a nonzero constant
-- If $c\neq 0$, $d=1$, long-term forecasts will follow a straight line
+
+* If $c=0$, $d=0$, long-term forecasts will tend to 0
+* If $c=0$, $d=1$, long-term forecasts will tend to a nonzero constant
+* If $c=0$, $d=2$, long-term forecasts will follow a straight line
+* If $c\neq 0$, $d=0$, long-term forecasts will tend to a nonzero constant
+* If $c\neq 0$, $d=1$, long-term forecasts will follow a straight line
