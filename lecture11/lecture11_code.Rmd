@@ -1,0 +1,112 @@
+---
+title: "Lecture 11 Code Examples"
+output: 
+  pdf_document:
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fpp3)
+library(tseries)
+```
+
+# Unit root testing
+
+```{r}
+set.seed(5209)
+phi_vals <- c(0.5, 0.7, 0.9)
+n <- 100
+ar1_proc <- map(phi_vals, ~ arima.sim(model = list(ar = .), n = n))
+phi_vals[[4]] <- 1
+ar1_proc[[4]] <- arima.sim(model = list(order = c(0, 1, 0)), n = n)
+
+adf_vals <- map(ar1_proc, ~ adf.test(.))
+kpss_vals <- map(ar1_proc, ~ kpss.test(.))
+test_results <- tibble(phi = phi_vals,
+                       adf = map_dbl(adf_vals, ~ .$p.value),
+                       kpss = map_dbl(kpss_vals, ~ .$p.value))
+
+```
+
+```{r, warning=FALSE}
+B <- 500
+run_tests <- function() {
+  phi_vals <- c(0.5, 0.7, 0.9)
+  n <- 100
+  ar1_proc <- map(phi_vals, ~ arima.sim(model = list(ar = .), n = n))
+  phi_vals[[4]] <- 1
+  ar1_proc[[4]] <- arima.sim(model = list(order = c(0, 1, 0)), n = n)
+  
+  adf_vals <- map(ar1_proc, ~ adf.test(.))
+  kpss_vals <- map(ar1_proc, ~ kpss.test(.))
+  test_results <- tibble(phi = phi_vals,
+                         adf = map_dbl(adf_vals, ~ .$p.value),
+                         kpss = map_dbl(kpss_vals, ~ .$p.value)) |>
+    pivot_longer(cols = c("adf", "kpss"),
+                 names_to = "test_type",
+                 values_to = "pvalue")
+  test_results
+}
+all_results <- map(1:B, ~ run_tests()) |> 
+  bind_rows() |>
+  mutate(phi = as.factor(phi))
+ggplot(all_results) + geom_boxplot(aes(x = phi, y = pvalue, fill = test_type)) 
+```
+
+# Seasonal ARIMA
+
+```{r}
+leisure <- us_employment |>
+  filter(Title == "Leisure and Hospitality",
+         year(Month) > 2000) |>
+  mutate(Employed = Employed/1000) |>
+  select(Month, Employed)
+
+autoplot(leisure, Employed) +
+  labs(title = "US employment: leisure and hospitality",
+       y="Number of people (millions)")
+```
+
+```{r}
+gg_tsdisplay(leisure, difference(Employed), plot_type = "partial")
+```
+
+```{r}
+gg_tsdisplay(leisure, difference(Employed) |> difference(12), 
+             plot_type = "partial")
+```
+
+```{r}
+fit <- leisure |>
+  model(
+    arima012011 = ARIMA(Employed ~ pdq(0,1,2) + PDQ(0,1,1)),
+    arima210011 = ARIMA(Employed ~ pdq(2,1,0) + PDQ(0,1,1)),
+    arima210 = ARIMA(Employed ~ pdq(2,1,0) + PDQ(0,0,0)),
+    semi_auto = ARIMA(Employed ~ pdq(0:2,1,0)),
+    auto = ARIMA(Employed)
+  )
+```
+
+```{r}
+glance(fit)
+```
+
+```{r}
+fit |> select(auto) |> gg_tsresiduals(lag=36)
+```
+
+```{r}
+augment(fit) |>
+  filter(.model == "auto") |>
+  features(.innov, ljung_box, lag=24, dof=5)
+```
+
+```{r}
+forecast(fit, h=36) |>
+  filter(.model=='auto') |>
+  autoplot(leisure) +
+  labs(title = "US employment: leisure and hospitality",
+       y="Number of people (millions)")
+```
