@@ -1,0 +1,144 @@
+---
+title: "Lecture 11 Code Examples"
+output: 
+  pdf_document:
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(fpp3)
+library(tseries)
+```
+
+# Data splitting
+
+```{r}
+# Focus on recent production
+recent_production <- aus_production |>
+  filter(year(Quarter) >= 1992)
+
+# Create train set (production before 2007)
+beer_train <- recent_production |>
+  filter(year(Quarter) <= 2007)
+
+# Don't need to create an explicit test set
+```
+
+```{r}
+# Fit the model
+beer_fit <- beer_train |>
+  model(
+    `Naïve` = NAIVE(Beer),
+    `Seasonal naïve` = SNAIVE(Beer),
+    auto_arima = ARIMA(Beer)
+  )
+```
+
+```{r}
+# Forecast
+beer_fc <- beer_fit |>
+  forecast(h = 10)
+
+# Check validation accuracy
+accuracy(beer_fc, recent_production)
+```
+
+```{r}
+beer_fc |>
+  autoplot(
+    recent_production,
+    level = NULL
+  ) +
+  labs(
+    y = "Megalitres",
+    title = "Forecasts for quarterly beer production"
+  ) +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+```{r cross-validation}
+beer_train_cv <- recent_production |>
+  stretch_tsibble(.init = 12, .step = 1)
+```
+
+```{r}
+beer_fit_cv <- beer_train_cv |>
+  model(
+    `Naïve` = NAIVE(Beer),
+    `Seasonal naïve` = SNAIVE(Beer),
+    arima = ARIMA(Beer ~ pdq(0,0,1) + PDQ(0,1,1) + 1)
+  )
+```
+
+```{r}
+beer_fc_cv <- beer_fit_cv |> 
+  forecast(h = 1)
+
+cv_acc <- list()
+for (h in 1:3) {
+  cv_acc[[h]] <- beer_fit_cv |> 
+    forecast(h = h) |>
+    accuracy(recent_production)
+}
+
+# Generally, forecast accuracy should decrease with h, but the seasonal nature 
+# of the time series means we don't see that for small values of h
+```
+```{r}
+beer_fit |>
+  select(auto_arima) |>
+  gg_tsresiduals()
+# Residuals look like WN, so reasonable to use bootstrap
+```
+
+```{r bootstrap}
+boot_traj <- beer_fit |>
+  select(auto_arima) |>
+  generate(h = 10, times = 5, bootstrap = TRUE)
+
+recent_production |>
+  ggplot(aes(x = Quarter)) +
+  geom_line(aes(y = Beer)) +
+  geom_line(data = boot_traj, aes(y = .sim, color = as.factor(.rep)))
+```
+
+```{r bootstrap}
+beer_fc_boot <- beer_fit |>
+  select(auto_arima) |>
+  forecast(h = 10, bootstrap = TRUE)
+
+beer_fc_boot |>
+  autoplot(recent_production) +
+  labs(
+    y = "Megalitres",
+    title = "Forecasts for quarterly beer production"
+  ) +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+```{r}
+beer_fc |>
+  accuracy(recent_production, list(qs = quantile_score,
+                                   winkler = winkler_score,
+                                   crps = CRPS,
+                                   skill = skill_score(CRPS)), 
+           probs = 0.1, level = 90)
+```
+
+```{r}
+beer_reg_fit <- beer_train |>
+  model(reg = TSLM(Beer ~ Cement + Electricity + Gas),
+        arima_reg = ARIMA(Beer ~ Cement + Electricity + Gas),
+        arima = ARIMA(Beer ~ pdq(0,0,1) + PDQ(0,1,1) + 1))
+beer_reg_fit |> accuracy() # Reg with ARIMA has smallest MAE etc. on training set
+```
+
+```{r}
+beer_val <- anti_join(recent_production, beer_train)
+beer_fc_reg <- beer_reg_fit |>
+  forecast(new_data = beer_val)
+
+beer_fc_reg |> accuracy(recent_production) # On val set, reg with ARIMA does
+# worse than just ARIMA
+```
